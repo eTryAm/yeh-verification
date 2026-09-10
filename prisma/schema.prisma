@@ -1,0 +1,735 @@
+// ─── DATASOURCE & GENERATOR ───────────────────────────────────────────────────
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+
+enum CredentialStatus {
+  DRAFT
+  PENDING
+  ISSUED
+  VALID
+  REVOKED
+  EXPIRED
+  SUPERSEDED
+}
+
+enum CredentialTypeCode {
+  CERTIFICATE
+  INTERNSHIP
+  VOLUNTEER
+  WORKSHOP
+  TRAINING
+  PARTICIPATION
+  ACHIEVEMENT
+  LEADERSHIP
+  APPRECIATION
+  BADGE
+  CUSTOM
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  STAGING
+  AWAITING_APPROVAL
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  COMPLETED
+  FAILED
+}
+
+enum ImportRowStatus {
+  PENDING
+  NORMALIZED
+  VALID
+  INVALID
+  DUPLICATE
+  CONFLICT
+  APPROVED
+  REJECTED
+  IMPORTED
+}
+
+enum DuplicateMatchType {
+  EXACT
+  LIKELY
+  POSSIBLE
+  NONE
+}
+
+enum AuditAction {
+  CREDENTIAL_CREATED
+  CREDENTIAL_ISSUED
+  CREDENTIAL_REVOKED
+  CREDENTIAL_SUPERSEDED
+  CREDENTIAL_EXPIRED
+  PARTICIPANT_CREATED
+  PARTICIPANT_UPDATED
+  PARTICIPANT_MERGED
+  IMPORT_CREATED
+  IMPORT_APPROVED
+  IMPORT_REJECTED
+  IMPORT_ROW_APPROVED
+  IMPORT_ROW_REJECTED
+  CONFLICT_RESOLVED
+  TEMPLATE_CREATED
+  TEMPLATE_UPDATED
+  TEMPLATE_PUBLISHED
+  ROLE_ASSIGNED
+  ROLE_REMOVED
+  SETTINGS_CHANGED
+  FEATURE_FLAG_CHANGED
+  INTEGRATION_CHANGED
+  USER_CREATED
+  USER_DEACTIVATED
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  CREDENTIAL_ADMIN
+  CREDENTIAL_ISSUER
+  IMPORT_ADMIN
+  VERIFICATION_ADMIN
+  AUDITOR
+  ANALYST
+  VIEW_ONLY
+}
+
+enum DataSource {
+  CSV
+  EXCEL
+  GOOGLE_SHEETS
+  REST_API
+  YEH_PORTAL
+  YEH_WEBSITE
+  GOOGLE_FORMS
+  UNSTOP
+  INTERNSHALA
+  MANUAL
+  CUSTOM
+}
+
+// ─── ORGANIZATION ─────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  isActive  Boolean  @default(true)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  programs        Program[]
+  credentialTypes CredentialType[]
+  templates       CredentialTemplate[]
+  credentials     Credential[]
+  importBatches   ImportBatch[]
+  participants    Participant[]
+  auditLogs       AuditLog[]
+  featureFlags    FeatureFlag[]
+
+  @@map("organizations")
+}
+
+// ─── USER & AUTH ──────────────────────────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  name           String
+  avatarUrl      String?
+  role           UserRole  @default(VIEW_ONLY)
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Auth.js v5 adapter fields
+  emailVerified DateTime?
+  accounts      Account[]
+  sessions      Session[]
+
+  organization  Organization  @relation(fields: [organizationId], references: [id])
+  auditLogs     AuditLog[]    @relation("ActorAuditLogs")
+  importBatches ImportBatch[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model UserPassword {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("user_passwords")
+}
+
+// ─── PARTICIPANT ──────────────────────────────────────────────────────────────
+
+model Participant {
+  id              String   @id @default(cuid())
+  organizationId  String
+  participantCode String?
+  firstName       String
+  lastName        String
+  email           String?
+  phone           String?
+  institution     String?
+  course          String?
+  graduationYear  Int?
+  city            String?
+  state           String?
+  country         String?  @default("India")
+  metadata        Json     @default("{}")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization          Organization           @relation(fields: [organizationId], references: [id])
+  registrations         Registration[]
+  externalRegistrations ExternalRegistration[]
+  credentials           Credential[]
+  participations        Participation[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([email])
+  @@index([phone])
+  @@map("participants")
+}
+
+// ─── PROGRAM ──────────────────────────────────────────────────────────────────
+
+model Program {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  programCode    String
+  startDate      DateTime?
+  endDate        DateTime?
+  isActive       Boolean   @default(true)
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization          Organization           @relation(fields: [organizationId], references: [id])
+  registrations         Registration[]
+  participations        Participation[]
+  credentials           Credential[]
+  externalRegistrations ExternalRegistration[]
+
+  @@unique([organizationId, programCode])
+  @@index([organizationId])
+  @@map("programs")
+}
+
+// ─── EXTERNAL REGISTRATION ────────────────────────────────────────────────────
+
+model ExternalRegistration {
+  id             String     @id @default(cuid())
+  organizationId String
+  source         DataSource
+  externalId     String
+  participantId  String?
+  programId      String?
+  sourceDate     DateTime?
+  rawPayload     Json
+  normalizedData Json       @default("{}")
+  syncRunId      String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  participant Participant? @relation(fields: [participantId], references: [id])
+  program     Program?     @relation(fields: [programId], references: [id])
+  syncRun     SyncRun?     @relation(fields: [syncRunId], references: [id])
+
+  @@unique([source, externalId])
+  @@index([organizationId])
+  @@index([participantId])
+  @@index([source])
+  @@map("external_registrations")
+}
+
+// ─── REGISTRATION ─────────────────────────────────────────────────────────────
+
+model Registration {
+  id             String     @id @default(cuid())
+  organizationId String
+  participantId  String
+  programId      String
+  registeredAt   DateTime
+  source         DataSource
+  metadata       Json       @default("{}")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  participant Participant @relation(fields: [participantId], references: [id])
+  program     Program     @relation(fields: [programId], references: [id])
+
+  @@unique([participantId, programId])
+  @@index([organizationId])
+  @@index([programId])
+  @@map("registrations")
+}
+
+// ─── PARTICIPATION ────────────────────────────────────────────────────────────
+
+model Participation {
+  id              String    @id @default(cuid())
+  organizationId  String
+  participantId   String
+  programId       String
+  role            String?
+  attendanceHours Decimal?  @db.Decimal(10, 2)
+  completionPct   Decimal?  @db.Decimal(5, 2)
+  startDate       DateTime?
+  endDate         DateTime?
+  metadata        Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  participant Participant  @relation(fields: [participantId], references: [id])
+  program     Program      @relation(fields: [programId], references: [id])
+  eligibility Eligibility?
+
+  @@index([organizationId])
+  @@index([participantId])
+  @@index([programId])
+  @@map("participations")
+}
+
+// ─── ELIGIBILITY ──────────────────────────────────────────────────────────────
+
+model Eligibility {
+  id              String   @id @default(cuid())
+  participationId String   @unique
+  isEligible      Boolean
+  reason          String?
+  checkedAt       DateTime @default(now())
+  overriddenBy    String?
+  overrideReason  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  participation Participation @relation(fields: [participationId], references: [id])
+  credentials   Credential[]
+
+  @@map("eligibilities")
+}
+
+// ─── CREDENTIAL TYPE ──────────────────────────────────────────────────────────
+
+model CredentialType {
+  id             String             @id @default(cuid())
+  organizationId String
+  code           CredentialTypeCode
+  name           String
+  description    String?
+  idPrefix       String
+  isActive       Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id])
+  credentials  Credential[]
+  templates    CredentialTemplate[]
+  sequences    CredentialSequence[]
+
+  @@unique([organizationId, idPrefix])
+  @@index([organizationId])
+  @@map("credential_types")
+}
+
+// ─── CREDENTIAL SEQUENCE ──────────────────────────────────────────────────────
+
+model CredentialSequence {
+  id               String @id @default(cuid())
+  organizationId   String
+  credentialTypeId String
+  year             Int
+  lastSequence     Int    @default(0)
+
+  credentialType CredentialType @relation(fields: [credentialTypeId], references: [id])
+
+  @@unique([organizationId, credentialTypeId, year])
+  @@map("credential_sequences")
+}
+
+// ─── CREDENTIAL TEMPLATE ──────────────────────────────────────────────────────
+
+model CredentialTemplate {
+  id               String   @id @default(cuid())
+  organizationId   String
+  credentialTypeId String
+  name             String
+  description      String?
+  currentVersionId String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization   Organization               @relation(fields: [organizationId], references: [id])
+  credentialType CredentialType             @relation(fields: [credentialTypeId], references: [id])
+  versions       CredentialTemplateVersion[]
+  credentials    Credential[]
+
+  @@index([organizationId])
+  @@map("credential_templates")
+}
+
+model CredentialTemplateVersion {
+  id           String    @id @default(cuid())
+  templateId   String
+  version      Int
+  label        String?
+  htmlContent  String    @db.Text
+  cssContent   String?   @db.Text
+  variables    Json      @default("[]")
+  thumbnailKey String?
+  isPublished  Boolean   @default(false)
+  publishedAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  template    CredentialTemplate @relation(fields: [templateId], references: [id])
+  credentials Credential[]
+
+  @@unique([templateId, version])
+  @@map("credential_template_versions")
+}
+
+// ─── CREDENTIAL ───────────────────────────────────────────────────────────────
+
+model Credential {
+  id                       String           @id @default(cuid())
+  credentialId             String           @unique
+  organizationId           String
+  credentialTypeId         String
+  templateId               String?
+  templateVersionId        String?
+  participantId            String
+  programId                String?
+  eligibilityId            String?
+  title                    String
+  recipientName            String
+  role                     String?
+  issueDate                DateTime?
+  expiresAt                DateTime?
+  duration                 String?
+  status                   CredentialStatus @default(DRAFT)
+  isVerificationEnabled    Boolean          @default(true)
+  qrToken                  String?          @unique
+  supersededByCredentialId String?
+  metadata                 Json             @default("{}")
+  issuedBy                 String?
+  revokedBy                String?
+  revokedAt                DateTime?
+  revocationReason         String?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  organization     Organization               @relation(fields: [organizationId], references: [id])
+  credentialType   CredentialType             @relation(fields: [credentialTypeId], references: [id])
+  template         CredentialTemplate?        @relation(fields: [templateId], references: [id])
+  templateVersion  CredentialTemplateVersion? @relation(fields: [templateVersionId], references: [id])
+  participant      Participant                @relation(fields: [participantId], references: [id])
+  program          Program?                   @relation(fields: [programId], references: [id])
+  eligibility      Eligibility?               @relation(fields: [eligibilityId], references: [id])
+  statusHistory    CredentialStatusHistory[]
+  files            CredentialFile[]
+  verificationLogs VerificationLog[]
+
+  @@index([organizationId])
+  @@index([participantId])
+  @@index([status])
+  @@index([credentialTypeId])
+  @@index([qrToken])
+  @@map("credentials")
+}
+
+model CredentialStatusHistory {
+  id           String            @id @default(cuid())
+  credentialId String
+  fromStatus   CredentialStatus?
+  toStatus     CredentialStatus
+  changedBy    String?
+  reason       String?
+  metadata     Json              @default("{}")
+  createdAt    DateTime          @default(now())
+
+  credential Credential @relation(fields: [credentialId], references: [id])
+
+  @@index([credentialId])
+  @@map("credential_status_history")
+}
+
+model CredentialFile {
+  id              String   @id @default(cuid())
+  credentialId    String
+  fileType        String
+  storageKey      String
+  storageProvider String   @default("r2")
+  fileSizeBytes   Int?
+  mimeType        String
+  createdAt       DateTime @default(now())
+
+  credential Credential @relation(fields: [credentialId], references: [id])
+
+  @@index([credentialId])
+  @@map("credential_files")
+}
+
+// ─── VERIFICATION LOG ─────────────────────────────────────────────────────────
+
+model VerificationLog {
+  id           String   @id @default(cuid())
+  credentialId String
+  result       String
+  ipHash       String?
+  userAgent    String?
+  requestedAt  DateTime @default(now())
+
+  credential Credential @relation(fields: [credentialId], references: [id])
+
+  @@index([credentialId])
+  @@index([requestedAt])
+  @@map("verification_logs")
+}
+
+// ─── IMPORT PIPELINE ──────────────────────────────────────────────────────────
+
+model ImportBatch {
+  id             String       @id @default(cuid())
+  organizationId String
+  source         DataSource
+  programId      String?
+  initiatedBy    String
+  status         ImportStatus @default(PENDING)
+  totalRows      Int          @default(0)
+  validRows      Int          @default(0)
+  invalidRows    Int          @default(0)
+  duplicateRows  Int          @default(0)
+  conflictRows   Int          @default(0)
+  approvedRows   Int          @default(0)
+  rejectedRows   Int          @default(0)
+  importedRows   Int          @default(0)
+  sourceFileName String?
+  sourceFileKey  String?
+  errorSummary   Json?
+  metadata       Json         @default("{}")
+  jobId          String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  initiator    User          @relation(fields: [initiatedBy], references: [id])
+  rows         ImportRow[]
+  errors       ImportError[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id                   String              @id @default(cuid())
+  batchId              String
+  rowIndex             Int
+  status               ImportRowStatus     @default(PENDING)
+  rawData              Json
+  normalizedData       Json                @default("{}")
+  matchType            DuplicateMatchType?
+  matchedParticipantId String?
+  validationErrors     Json                @default("[]")
+  conflictId           String?
+  approvedBy           String?
+  rejectedBy           String?
+  approvedAt           DateTime?
+  rejectedAt           DateTime?
+  rejectionReason      String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  batch    ImportBatch     @relation(fields: [batchId], references: [id])
+  conflict ImportConflict? @relation(fields: [conflictId], references: [id])
+
+  @@index([batchId])
+  @@index([status])
+  @@map("import_rows")
+}
+
+model ImportError {
+  id        String   @id @default(cuid())
+  batchId   String
+  rowIndex  Int?
+  errorCode String
+  message   String
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  batch ImportBatch @relation(fields: [batchId], references: [id])
+
+  @@index([batchId])
+  @@map("import_errors")
+}
+
+model ImportConflict {
+  id           String             @id @default(cuid())
+  batchId      String
+  conflictType String
+  incomingData Json
+  existingData Json
+  matchType    DuplicateMatchType
+  candidateIds Json               @default("[]")
+  resolvedBy   String?
+  resolution   String?
+  resolvedAt   DateTime?
+  notes        String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  rows ImportRow[]
+
+  @@map("import_conflicts")
+}
+
+// ─── SYNC RUNS ────────────────────────────────────────────────────────────────
+
+model SyncRun {
+  id             String     @id @default(cuid())
+  organizationId String
+  source         DataSource
+  integrationId  String?
+  status         String
+  recordsFetched Int        @default(0)
+  recordsNew     Int        @default(0)
+  recordsUpdated Int        @default(0)
+  recordsSkipped Int        @default(0)
+  errorMessage   String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime   @default(now())
+
+  externalRegistrations ExternalRegistration[]
+
+  @@index([organizationId])
+  @@index([source])
+  @@map("sync_runs")
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id             String      @id @default(cuid())
+  organizationId String
+  actorId        String?
+  action         AuditAction
+  resourceType   String
+  resourceId     String
+  result         String
+  metadata       Json        @default("{}")
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  actor        User?        @relation("ActorAuditLogs", fields: [actorId], references: [id])
+
+  @@index([organizationId])
+  @@index([actorId])
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── FEATURE FLAGS ────────────────────────────────────────────────────────────
+
+model FeatureFlag {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  isEnabled      Boolean  @default(false)
+  description    String?
+  updatedBy      String?
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@map("feature_flags")
+}
+
+// ─── SYSTEM SETTINGS ──────────────────────────────────────────────────────────
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@map("system_settings")
+}
