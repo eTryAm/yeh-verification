@@ -30,31 +30,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const { email, password } = parsed.data;
 
-        // Fetch user password hash
-        const userWithPassword = await prisma.$queryRaw<
-          Array<{ id: string; password_hash: string }>
-        >`
-          SELECT u.id, up.password_hash
-          FROM users u
-          JOIN user_passwords up ON up.user_id = u.id
-          WHERE u.email = ${email}
-            AND u.is_active = true
-          LIMIT 1
-        `;
-
-        if (!userWithPassword[0]) return null;
-
-        // Timing-safe comparison
-        const inputHash = createHash("sha256").update(password).digest("hex");
-        const stored = userWithPassword[0].password_hash;
-        if (inputHash !== stored) return null;
-
-        const user = await prisma.user.findUnique({
-          where: { id: userWithPassword[0].id },
+        // Fetch user by email
+        const user = await prisma.user.findFirst({
+          where: { email: email.toLowerCase().trim() },
           include: { organization: true },
         });
 
         if (!user || !user.isActive) return null;
+
+        // Fetch stored password hash
+        const userPassword = await prisma.userPassword.findUnique({
+          where: { userId: user.id },
+        });
+
+        if (!userPassword) return null;
+
+        // Timing-safe comparison
+        const inputHash = createHash("sha256").update(password).digest("hex");
+        if (inputHash !== userPassword.passwordHash) return null;
 
         // Update last login timestamp
         await prisma.user.update({
