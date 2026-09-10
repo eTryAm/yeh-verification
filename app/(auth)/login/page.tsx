@@ -2,16 +2,18 @@
 
 import { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/admin";
+  const callbackUrl = searchParams.get("callbackUrl") || "/admin";
+  const errorParam = searchParams.get("error");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    errorParam ? "Session expired or invalid credentials. Please sign in again." : null
+  );
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -20,21 +22,26 @@ function LoginForm() {
     setLoading(true);
 
     try {
+      const cleanEmail = email.trim().toLowerCase();
       const result = await signIn("credentials", {
-        email,
+        email: cleanEmail,
         password,
         redirect: false,
       });
 
       if (result?.error) {
         setError("Invalid email or password");
+        setLoading(false);
+      } else if (result?.ok) {
+        // Full page redirect ensures the session cookies are cleanly sent to the server
+        window.location.href = callbackUrl;
       } else {
-        router.push(callbackUrl);
-        router.refresh();
+        setError("Authentication failed. Please verify your email and password.");
+        setLoading(false);
       }
-    } catch {
+    } catch (err) {
+      console.error("Sign-in error:", err);
       setError("An unexpected error occurred. Please try again.");
-    } finally {
       setLoading(false);
     }
   }
@@ -106,14 +113,15 @@ export default function LoginPage() {
         <p className="text-sm text-gray-500 mt-1">Youth Empowerment Hub</p>
       </div>
 
-      {/* useSearchParams must be inside Suspense for SSG compatibility */}
-      <Suspense fallback={
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-          <div className="h-48 flex items-center justify-center">
-            <p className="text-sm text-gray-400">Loading…</p>
+      <Suspense
+        fallback={
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <div className="h-48 flex items-center justify-center">
+              <p className="text-sm text-gray-400">Loading…</p>
+            </div>
           </div>
-        </div>
-      }>
+        }
+      >
         <LoginForm />
       </Suspense>
 
