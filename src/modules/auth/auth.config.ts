@@ -1,5 +1,4 @@
 import NextAuth from "next-auth";
-import { PrismaAdapter } from "@auth/prisma-adapter";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/infrastructure/db/prisma";
 import { z } from "zod";
@@ -11,10 +10,10 @@ const loginSchema = z.object({
 });
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  secret: process.env.AUTH_SECRET,
 
   session: {
-    strategy: "database",
+    strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
 
@@ -31,8 +30,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const { email, password } = parsed.data;
 
-        // Fetch user — note: password hash is stored in a separate table
-        // to keep it out of the main user model
+        // Fetch user password hash
         const userWithPassword = await prisma.$queryRaw<
           Array<{ id: string; password_hash: string }>
         >`
@@ -56,9 +54,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           include: { organization: true },
         });
 
-        if (!user) return null;
+        if (!user || !user.isActive) return null;
 
-        // Update last login
+        // Update last login timestamp
         await prisma.user.update({
           where: { id: user.id },
           data: { lastLoginAt: new Date() },
@@ -76,34 +74,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
 
   callbacks: {
-    async session({ session, user }) {
-      // Enrich session with organization and role from DB
-      const dbUser = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: {
-          id: true,
-          organizationId: true,
-          role: true,
-          name: true,
-          email: true,
-          isActive: true,
-        },
-      });
-
-      if (!dbUser || !dbUser.isActive) {
-        // Force sign-out of deactivated users
-        return { ...session, user: undefined as never };
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.organizationId = (user as unknown as { organizationId: string }).organizationId;
+        token.role = (user as unknown as { role: string }).role;
       }
+      return token;
+    },
 
-      session.user = {
-        ...session.user,
-        id: dbUser.id,
-        organizationId: dbUser.organizationId,
-        role: dbUser.role,
-        name: dbUser.name,
-        email: dbUser.email,
-      } as never;
-
+    async session({ session, token }) {
+      if (token && session.user) {
+        session.user = {
+          ...session.user,
+          id: token.id as string,
+          organizationId: token.organizationId as string,
+          role: token.role as never,
+        } as never;
+      }
       return session;
     },
   },

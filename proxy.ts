@@ -13,6 +13,7 @@ export async function proxy(request: NextRequest) {
   const publicPrefixes = [
     "/verify",
     "/login",
+    "/api/auth",
     "/api/v1/auth",
     "/api/v1/health",
     "/api/v1/verification",
