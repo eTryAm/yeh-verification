@@ -8,6 +8,8 @@ import { RateLimitError } from "@/lib/errors";
  * GET /api/v1/verification/[credentialId]
  * Public — no authentication required. Rate limited: 10 req/min/IP.
  */
+export const dynamic = "force-dynamic";
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ credentialId: string }> }

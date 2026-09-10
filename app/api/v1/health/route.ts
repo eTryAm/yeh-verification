@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/infrastructure/db/prisma";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const checks = {
     status: "ok" as "ok" | "degraded" | "down",

@@ -20,6 +20,8 @@ const createParticipantSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requirePermission(Permission.PARTICIPANT_VIEW);

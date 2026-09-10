@@ -5,6 +5,8 @@ import { Permission } from "@/modules/rbac/permissions";
 import { ok, handleRouteError } from "@/lib/api-response";
 import { parsePaginationParams } from "@/lib/pagination";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requirePermission(Permission.AUDIT_VIEW);

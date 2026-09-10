@@ -6,6 +6,8 @@ import { Permission } from "@/modules/rbac/permissions";
 import { ok, handleRouteError } from "@/lib/api-response";
 import type { FeatureFlagKey } from "@/modules/feature-flags/feature-flags.constants";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(_request: NextRequest) {
   try {
     const user = await requirePermission(Permission.SETTINGS_MANAGE);

@@ -26,6 +26,8 @@ const createCredentialSchema = z.object({
  * GET /api/v1/credentials
  * List credentials with pagination and optional filters.
  */
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requirePermission(Permission.CREDENTIAL_VIEW);
