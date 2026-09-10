@@ -35,12 +35,12 @@ async function seed() {
   });
   console.log(`✓ Admin user: ${admin.email}`);
 
-  // Store password hash (raw SQL to avoid schema coupling)
-  await prisma.$executeRaw`
-    INSERT INTO user_passwords (id, user_id, password_hash)
-    VALUES (gen_random_uuid(), ${admin.id}, ${passwordHash})
-    ON CONFLICT (user_id) DO UPDATE SET password_hash = ${passwordHash}
-  `;
+  // Store password hash
+  await prisma.userPassword.upsert({
+    where: { userId: admin.id },
+    update: { passwordHash },
+    create: { userId: admin.id, passwordHash },
+  });
   console.log(`✓ Password hash stored`);
 
   // ─── Feature Flags ────────────────────────────────────────────────────────
