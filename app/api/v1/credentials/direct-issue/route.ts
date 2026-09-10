@@ -175,13 +175,16 @@ export async function POST(request: NextRequest) {
       metadata: { credentialId: credential.credentialId, title: credential.title },
     });
 
-    const verificationBaseUrl =
-      process.env.NEXT_PUBLIC_VERIFICATION_BASE_URL ||
-      `${process.env.NEXT_PUBLIC_APP_URL || "https://youthempowerment.in"}/verify`;
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+    const proto = request.headers.get("x-forwarded-proto") || "https";
+    const origin = host
+      ? `${proto}://${host}`
+      : process.env.NEXT_PUBLIC_APP_URL || "https://youthempowerment.in";
+    const verificationUrl = `${origin}/verify/${credential.credentialId}`;
 
     return created({
       credential,
-      verificationUrl: `${verificationBaseUrl}/${credential.credentialId}`,
+      verificationUrl,
     });
   } catch (err) {
     return handleRouteError(err);

@@ -154,7 +154,12 @@ export function CredentialsClient({
   }
 
   async function openQrModal(item: CredentialItem) {
-    const verificationUrl = `${verificationBaseUrl}/${item.credentialId}`;
+    const currentOrigin =
+      typeof window !== "undefined" && window.location.origin
+        ? window.location.origin
+        : verificationBaseUrl;
+    const cleanOrigin = currentOrigin.replace(/\/verify\/?$/, "");
+    const verificationUrl = `${cleanOrigin}/verify/${item.credentialId}`;
     try {
       const qrDataUrl = await QRCodeLib.toDataURL(verificationUrl, {
         width: 320,
