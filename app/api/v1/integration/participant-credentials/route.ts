@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import { prisma } from "@/infrastructure/db/prisma";
 import { auditService } from "@/modules/audit/audit.service";
 import { verificationRateLimiter } from "@/lib/rate-limit";
@@ -19,12 +19,12 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest) {
   try {
-    // -- 1. Rate limit by IP ---------------------------------------------------
+    // 1. Rate limit by IP
     const ip =
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
       "unknown";
     try {
-      verificationRateLimiter.check(`integration:${ip}`);
+      verificationRateLimiter.check("integration:" + ip);
     } catch (e) {
       if (e instanceof RateLimitError) {
         return errorResponse("RATE_LIMITED", e.message, 429);
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       throw e;
     }
 
-    // -- 2. Authenticate service token (constant-time) -------------------------
+    // 2. Authenticate service token (constant-time)
     const authHeader = request.headers.get("authorization") ?? "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.slice(7).trim()
@@ -51,12 +51,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // -- 3. Parse query params -------------------------------------------------
+    // 3. Parse query params
     const { searchParams } = request.nextUrl;
     const participantCode = searchParams.get("participantCode")?.trim();
-    const email = searchParams.get("email")?.trim().toLowerCase();
+    const emailRaw = searchParams.get("email")?.trim().toLowerCase();
 
-    if (!participantCode && !email) {
+    if (!participantCode && !emailRaw) {
       return errorResponse(
         "VALIDATION_ERROR",
         "Either participantCode or email query parameter is required",
@@ -64,23 +64,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // -- 4. Look up participant ------------------------------------------------
+    // 4. Look up participant
     const participant = await prisma.participant.findFirst({
       where: participantCode
         ? { participantCode }
-        : { email },
+        : { email: emailRaw },
       select: { id: true, organizationId: true, participantCode: true },
     });
 
     if (!participant) {
-      return errorResponse(
-        "NOT_FOUND",
-        "Participant not found",
-        404
-      );
+      return errorResponse("NOT_FOUND", "Participant not found", 404);
     }
 
-    // -- 5. Fetch credentials — only publicly verifiable statuses --------------
+    // 5. Fetch credentials - only publicly verifiable statuses
     const credentials = await prisma.credential.findMany({
       where: {
         participantId: participant.id,
@@ -103,7 +99,7 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // -- 6. Shape the public response — strip any internal fields -------------
+    // 6. Shape the public response - strip any internal fields
     const data = credentials.map((c) => ({
       credentialId: c.credentialId,
       title: c.title,
@@ -117,7 +113,7 @@ export async function GET(request: NextRequest) {
       issuer: c.organization.name,
     }));
 
-    // -- 7. Audit log — never block response on audit failure ------------------
+    // 7. Audit log - never block response on audit failure
     void auditService.log({
       organizationId: participant.organizationId,
       actorId: undefined,
@@ -127,7 +123,9 @@ export async function GET(request: NextRequest) {
       result: "SUCCESS",
       metadata: {
         caller: "performance-yeh",
-        query: participantCode ? { participantCode } : { email: "[redacted]" },
+        query: participantCode
+          ? { participantCode }
+          : { email: "[redacted]" },
         credentialCount: data.length,
         ip,
       },
