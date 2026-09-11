@@ -2,7 +2,7 @@
 import { useState, useRef } from "react";
 import {
   Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle,
-  ChevronDown, Download, Loader2, RefreshCw, Package
+  ChevronDown, Download, Loader2, RefreshCw, Package, Eye, Trash2, RotateCw
 } from "lucide-react";
 
 interface Batch {
@@ -17,6 +17,23 @@ interface Batch {
   importedRows: number;
   createdAt: string;
   metadata?: { credentialTitle?: string; programName?: string; credentialTypeCode?: string };
+}
+
+interface BatchRow {
+  id: string;
+  rowIndex: number;
+  status: "VALID" | "INVALID" | "DUPLICATE" | "CONFLICT" | "IMPORTED" | "PENDING";
+  normalizedData: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    institution?: string;
+    course?: string;
+    programCode?: string;
+  };
+  validationErrors: Array<{ field: string; message: string }>;
+  matchType?: string | null;
 }
 
 interface ImportResult {
@@ -52,6 +69,11 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [approving, setApproving] = useState<string | null>(null);
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [inspectingBatch, setInspectingBatch] = useState<Batch | null>(null);
+  const [inspectingRows, setInspectingRows] = useState<BatchRow[]>([]);
+  const [loadingRows, setLoadingRows] = useState(false);
   const [uploadResult, setUploadResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -103,6 +125,63 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
       setError(e instanceof Error ? e.message : "Approval failed");
     } finally {
       setApproving(null);
+    }
+  }
+
+  async function handleReprocess(batchId: string) {
+    setReprocessing(batchId);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch("/api/v1/imports/" + batchId + "/reprocess", { method: "POST" });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error?.message || "Re-analysis failed");
+      setSuccess("Re-analysis complete! Found " + json.data.validRows + " valid participants out of " + json.data.totalRows + ". Ready to issue!");
+      await refreshBatches();
+      if (inspectingBatch?.id === batchId) {
+        await handleInspect(inspectingBatch);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Re-analysis failed");
+    } finally {
+      setReprocessing(null);
+    }
+  }
+
+  async function handleDelete(batchId: string) {
+    if (!confirm("Are you sure you want to delete this import batch? All staged rows will be deleted.")) {
+      return;
+    }
+    setDeleting(batchId);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch("/api/v1/imports/" + batchId, { method: "DELETE" });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error?.message || "Delete failed");
+      setSuccess("Import batch deleted.");
+      setBatches((prev) => prev.filter((b) => b.id !== batchId));
+      if (inspectingBatch?.id === batchId) setInspectingBatch(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  async function handleInspect(batch: Batch) {
+    setInspectingBatch(batch);
+    setLoadingRows(true);
+    try {
+      const res = await fetch("/api/v1/imports/" + batch.id);
+      const json = await res.json();
+      if (json.success && json.data.rows) {
+        setInspectingRows(json.data.rows);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingRows(false);
     }
   }
 
@@ -352,22 +431,55 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
                   </td>
                   <td className="px-5 py-4 text-xs text-gray-400">{new Date(b.createdAt).toLocaleDateString()}</td>
                   <td className="px-5 py-4">
-                    {b.status === "AWAITING_APPROVAL" && (
+                    <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => handleApprove(b.id)}
-                        disabled={approving === b.id}
-                        className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                        onClick={() => handleInspect(b)}
+                        title="Inspect Rows & Validation Details"
+                        className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
                       >
-                        {approving === b.id
-                          ? <><Loader2 className="w-3 h-3 animate-spin" /> Issuing...</>
-                          : <><CheckCircle2 className="w-3 h-3" /> Approve & Issue</>}
+                        <Eye className="w-4 h-4" />
                       </button>
-                    )}
-                    {b.status === "COMPLETED" && (
-                      <span className="flex items-center gap-1 text-xs text-green-600 font-semibold">
-                        <CheckCircle2 className="w-3 h-3" /> {b.importedRows} issued
-                      </span>
-                    )}
+
+                      {b.invalidRows > 0 && b.status !== "COMPLETED" && (
+                        <button
+                          onClick={() => handleReprocess(b.id)}
+                          disabled={reprocessing === b.id}
+                          title="Re-analyze rows with updated smart matcher"
+                          className="flex items-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition"
+                        >
+                          <RotateCw className={"w-3.5 h-3.5 " + (reprocessing === b.id ? "animate-spin" : "")} />
+                          Re-analyze
+                        </button>
+                      )}
+
+                      {b.status === "AWAITING_APPROVAL" && (
+                        <button
+                          onClick={() => handleApprove(b.id)}
+                          disabled={approving === b.id || b.validRows === 0}
+                          title={b.validRows === 0 ? "No valid rows. Click Re-analyze first." : "Approve and issue credentials"}
+                          className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                        >
+                          {approving === b.id
+                            ? <><Loader2 className="w-3 h-3 animate-spin" /> Issuing...</>
+                            : <><CheckCircle2 className="w-3 h-3" /> Approve & Issue</>}
+                        </button>
+                      )}
+
+                      {b.status === "COMPLETED" && (
+                        <span className="flex items-center gap-1 text-xs text-green-600 font-semibold bg-green-50 px-2 py-1 rounded-md">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> {b.importedRows} issued
+                        </span>
+                      )}
+
+                      <button
+                        onClick={() => handleDelete(b.id)}
+                        disabled={deleting === b.id}
+                        title="Delete Batch"
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -383,6 +495,143 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
           </table>
         </div>
       </div>
+
+      {/* Row Inspector Modal */}
+      {inspectingBatch && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/70">
+              <div>
+                <h3 className="font-bold text-gray-900 text-base">
+                  Batch Inspection: {inspectingBatch.sourceFileName || inspectingBatch.source}
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Total {inspectingBatch.totalRows} rows — {inspectingBatch.validRows} valid, {inspectingBatch.invalidRows} invalid
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {inspectingBatch.invalidRows > 0 && inspectingBatch.status !== "COMPLETED" && (
+                  <button
+                    onClick={() => handleReprocess(inspectingBatch.id)}
+                    disabled={reprocessing === inspectingBatch.id}
+                    className="flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-200 transition"
+                  >
+                    <RotateCw className={"w-3.5 h-3.5 " + (reprocessing === inspectingBatch.id ? "animate-spin" : "")} />
+                    Re-analyze with Smart Matcher
+                  </button>
+                )}
+                <button
+                  onClick={() => setInspectingBatch(null)}
+                  className="text-gray-400 hover:text-gray-600 text-sm font-bold px-2 py-1"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto p-6 flex-1">
+              {loadingRows ? (
+                <div className="py-16 text-center text-gray-400">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto text-blue-600 mb-2" />
+                  <p className="text-sm">Loading batch rows...</p>
+                </div>
+              ) : inspectingRows.length === 0 ? (
+                <p className="py-12 text-center text-gray-400 text-sm">No rows found in this batch.</p>
+              ) : (
+                <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                  <table className="w-full text-left text-xs text-gray-600">
+                    <thead className="bg-gray-50 text-gray-500 font-semibold uppercase border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-3">#</th>
+                        <th className="px-4 py-3">Name</th>
+                        <th className="px-4 py-3">Email & Contact</th>
+                        <th className="px-4 py-3">Institution / College</th>
+                        <th className="px-4 py-3">Course / Degree</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Details / Errors</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {inspectingRows.map((r) => {
+                        const name = [r.normalizedData?.firstName, r.normalizedData?.lastName]
+                          .filter(Boolean)
+                          .join(" ");
+
+                        return (
+                          <tr key={r.id} className="hover:bg-gray-50/60">
+                            <td className="px-4 py-3 font-mono text-gray-400">{r.rowIndex}</td>
+                            <td className="px-4 py-3 font-bold text-gray-900">{name || "—"}</td>
+                            <td className="px-4 py-3">
+                              <div>{r.normalizedData?.email || "—"}</div>
+                              {r.normalizedData?.phone && (
+                                <div className="text-gray-400 text-[11px]">{r.normalizedData.phone}</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">{r.normalizedData?.institution || "—"}</td>
+                            <td className="px-4 py-3">{r.normalizedData?.course || "—"}</td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={
+                                  "inline-block px-2 py-0.5 rounded font-bold text-[11px] " +
+                                  (r.status === "VALID"
+                                    ? "bg-green-100 text-green-800"
+                                    : r.status === "INVALID"
+                                    ? "bg-red-100 text-red-800"
+                                    : r.status === "IMPORTED"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : r.status === "DUPLICATE"
+                                    ? "bg-indigo-100 text-indigo-800"
+                                    : "bg-amber-100 text-amber-800")
+                                }
+                              >
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {r.validationErrors && r.validationErrors.length > 0 ? (
+                                <div className="text-red-600 text-[11px] space-y-0.5">
+                                  {r.validationErrors.map((err, idx) => (
+                                    <div key={idx} className="flex items-center gap-1">
+                                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                                      <span>{err.message}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : r.status === "VALID" ? (
+                                <span className="text-green-600 font-medium flex items-center gap-1 text-[11px]">
+                                  <CheckCircle2 className="w-3 h-3 shrink-0" /> Ready to issue
+                                </span>
+                              ) : r.status === "IMPORTED" ? (
+                                <span className="text-blue-600 font-medium text-[11px]">
+                                  ✓ Certificate Issued
+                                </span>
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/70">
+              <p className="text-xs text-gray-500">
+                Click <strong>Re-analyze with Smart Matcher</strong> to re-evaluate headers with the new normalizer.
+              </p>
+              <button
+                onClick={() => setInspectingBatch(null)}
+                className="bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold px-4 py-2 rounded-xl transition"
+              >
+                Close Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

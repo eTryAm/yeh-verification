@@ -35,25 +35,32 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const credentialTypeCode = (formData.get("credentialTypeCode") as string) || "CERTIFICATE";
-    const programName = (formData.get("programName") as string) || "";
+    let programName = (formData.get("programName") as string) || "";
     const credentialTitle = (formData.get("credentialTitle") as string) || "Certificate of Participation";
 
     if (!file) {
-      return handleRouteError(new Error("No file uploaded"));
+      return handleRouteError(new Error("No CSV file uploaded"));
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Parse CSV using existing adapter
+    // 1. Parse and normalize CSV using smart alias matcher
     const rawRecords = await csvAdapter.fetch({ fileBuffer: buffer });
     const normalized = rawRecords.map((r) => csvAdapter.normalize(r));
 
-    let totalRows = normalized.length;
-    let validRows = 0;
-    let invalidRows = 0;
-    let conflictRows = 0;
+    if (normalized.length === 0) {
+      return handleRouteError(new Error("The CSV file is empty or has no readable rows"));
+    }
 
-    // Find or create credential type
+    // Auto-detect program/event name from CSV opportunity_name if not provided manually
+    if (!programName.trim()) {
+      const detectedProgram = normalized.find((n) => n.programCode)?.programCode;
+      if (detectedProgram) {
+        programName = detectedProgram;
+      }
+    }
+
+    // 2. Find or create CredentialType
     let credentialType = await prisma.credentialType.findFirst({
       where: { organizationId: user.organizationId, code: credentialTypeCode as never },
     });
@@ -68,46 +75,55 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create the import batch
+    // 3. Create ImportBatch
     const batch = await prisma.importBatch.create({
       data: {
         organizationId: user.organizationId,
         source: "CSV",
         initiatedBy: user.id,
         status: "STAGING",
-        totalRows,
+        totalRows: normalized.length,
         sourceFileName: file.name,
         metadata: {
           credentialTypeCode,
           credentialTypeId: credentialType.id,
-          programName,
-          credentialTitle,
+          programName: programName.trim(),
+          credentialTitle: credentialTitle.trim(),
         } as never,
       },
     });
 
-    // Process each row: validate + deduplicate
-    const rowPromises = normalized.map(async (norm, index) => {
-      const validation = csvAdapter.validate(norm);
-      const dedup = await detectDuplicate(user.organizationId, norm);
+    // 4. Validate & detect duplicates for each row
+    let validCount = 0;
+    let invalidCount = 0;
+    let conflictCount = 0;
 
-      const isConflict = dedup.matchType === "POSSIBLE" || dedup.matchType === "LIKELY";
-      const isValid = validation.isValid && !isConflict;
-      const isDuplicate = dedup.matchType === "EXACT";
+    const rowInserts = await Promise.all(
+      normalized.map(async (norm, index) => {
+        const validation = csvAdapter.validate(norm);
+        const dedup = await detectDuplicate(user.organizationId, norm);
 
-      if (isValid || isDuplicate) validRows++;
-      else if (isConflict) conflictRows++;
-      else invalidRows++;
+        const isConflict = dedup.matchType === "POSSIBLE" || dedup.matchType === "LIKELY";
+        const isDuplicate = dedup.matchType === "EXACT";
 
-      let status: string = "VALID";
-      if (!validation.isValid) status = "INVALID";
-      else if (isDuplicate) status = "DUPLICATE";
-      else if (isConflict) status = "CONFLICT";
+        let status: "VALID" | "INVALID" | "DUPLICATE" | "CONFLICT" = "VALID";
+        if (!validation.isValid) {
+          status = "INVALID";
+          invalidCount++;
+        } else if (isDuplicate) {
+          status = "DUPLICATE";
+          validCount++;
+        } else if (isConflict) {
+          status = "CONFLICT";
+          conflictCount++;
+        } else {
+          status = "VALID";
+          validCount++;
+        }
 
-      return prisma.importRow.create({
-        data: {
+        return {
           batchId: batch.id,
-          rowIndex: index,
+          rowIndex: index + 1,
           status: status as never,
           rawData: norm.metadata as never,
           normalizedData: {
@@ -117,24 +133,28 @@ export async function POST(request: NextRequest) {
             phone: norm.phone,
             institution: norm.institution,
             course: norm.course,
+            programCode: norm.programCode,
           } as never,
           matchType: dedup.matchType,
           matchedParticipantId: dedup.matchedParticipantId,
           validationErrors: validation.errors as never,
-        },
-      });
+        };
+      })
+    );
+
+    // Persist all rows
+    await prisma.importRow.createMany({
+      data: rowInserts,
     });
 
-    await Promise.all(rowPromises);
-
-    // Update batch with counts
+    // Update batch with final counts
     await prisma.importBatch.update({
       where: { id: batch.id },
       data: {
         status: "AWAITING_APPROVAL",
-        validRows,
-        invalidRows,
-        conflictRows,
+        validRows: validCount,
+        invalidRows: invalidCount,
+        conflictRows: conflictCount,
       },
     });
 
@@ -145,10 +165,16 @@ export async function POST(request: NextRequest) {
       resourceType: "ImportBatch",
       resourceId: batch.id,
       result: "SUCCESS",
-      metadata: { fileName: file.name, totalRows, validRows, invalidRows },
+      metadata: { fileName: file.name, totalRows: normalized.length, validRows: validCount, invalidRows: invalidCount },
     });
 
-    return created({ batchId: batch.id, totalRows, validRows, invalidRows, conflictRows });
+    return created({
+      batchId: batch.id,
+      totalRows: normalized.length,
+      validRows: validCount,
+      invalidRows: invalidCount,
+      conflictRows: conflictCount,
+    });
   } catch (err) {
     return handleRouteError(err);
   }

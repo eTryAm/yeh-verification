@@ -6,7 +6,7 @@ import { generateCredentialId } from "@/modules/credentials/credential-id.genera
 import { generateParticipantCode } from "@/lib/participant-code.generator";
 import { generateSecureToken } from "@/lib/crypto";
 import { auditService } from "@/modules/audit/audit.service";
-import { ok, handleRouteError } from "@/lib/api-response";
+import { ok, handleRouteError, errorResponse } from "@/lib/api-response";
 import { CredentialStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -23,16 +23,17 @@ export async function POST(
       where: { id: batchId, organizationId: user.organizationId },
     });
     if (!batch) {
-      return handleRouteError(Object.assign(new Error("Import batch not found"), { code: "NOT_FOUND", statusCode: 404 }));
+      return errorResponse("NOT_FOUND", "Import batch not found", 404);
     }
 
-    const meta = batch.metadata as {
+    const meta = (batch.metadata || {}) as {
       credentialTypeId?: string;
       credentialTypeCode?: string;
       programName?: string;
       credentialTitle?: string;
     };
 
+    // 1. Resolve or create CredentialType
     let credentialType = meta.credentialTypeId
       ? await prisma.credentialType.findUnique({ where: { id: meta.credentialTypeId } })
       : null;
@@ -54,6 +55,7 @@ export async function POST(
       }
     }
 
+    // 2. Resolve or create Program
     let programId: string | null = null;
     if (meta.programName && meta.programName.trim()) {
       const trimmed = meta.programName.trim();
@@ -69,6 +71,7 @@ export async function POST(
       programId = program.id;
     }
 
+    // 3. Fetch rows to issue
     const rows = await prisma.importRow.findMany({
       where: { batchId, status: { in: ["VALID", "DUPLICATE"] } },
     });
@@ -77,30 +80,58 @@ export async function POST(
     let skipped = 0;
 
     for (const row of rows) {
-      const norm = row.normalizedData as {
-        firstName?: string; lastName?: string;
-        email?: string; phone?: string; institution?: string; course?: string;
+      const norm = (row.normalizedData || {}) as {
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+        institution?: string;
+        course?: string;
+        programCode?: string;
       };
 
       try {
         let participantId: string;
-        const existing = norm.email
+        const cleanEmail = norm.email ? norm.email.trim().toLowerCase() : null;
+
+        const existing = cleanEmail
           ? await prisma.participant.findFirst({
-              where: { organizationId: user.organizationId, email: norm.email },
+              where: { organizationId: user.organizationId, email: cleanEmail },
             })
           : null;
 
         if (existing) {
           participantId = existing.id;
+          // Backfill participantCode, institution, course, phone if missing
+          const updates: Record<string, unknown> = {};
+          if (!existing.participantCode) {
+            updates.participantCode = await generateParticipantCode();
+          }
+          if (!existing.institution && norm.institution) {
+            updates.institution = norm.institution;
+          }
+          if (!existing.course && norm.course) {
+            updates.course = norm.course;
+          }
+          if (!existing.phone && norm.phone) {
+            updates.phone = norm.phone;
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await prisma.participant.update({
+              where: { id: existing.id },
+              data: updates,
+            });
+          }
         } else {
           const participantCode = await generateParticipantCode();
           const p = await prisma.participant.create({
             data: {
               organizationId: user.organizationId,
               participantCode,
-              firstName: norm.firstName || "Unknown",
+              firstName: norm.firstName || "Participant",
               lastName: norm.lastName || "",
-              email: norm.email || null,
+              email: cleanEmail,
               phone: norm.phone || null,
               institution: norm.institution || null,
               course: norm.course || null,
@@ -109,18 +140,22 @@ export async function POST(
           participantId = p.id;
         }
 
+        // Avoid duplicate credential for the same program
         if (programId) {
           const alreadyIssued = await prisma.credential.findFirst({
             where: { participantId, programId, organizationId: user.organizationId },
           });
-          if (alreadyIssued) { skipped++; continue; }
+          if (alreadyIssued) {
+            skipped++;
+            continue;
+          }
         }
 
         const recipientName = [norm.firstName, norm.lastName].filter(Boolean).join(" ") || "Participant";
         const credentialId = await generateCredentialId(
           user.organizationId,
-          credentialType!.id,
-          credentialType!.idPrefix
+          credentialType.id,
+          credentialType.idPrefix
         );
 
         await prisma.$transaction(async (tx) => {
@@ -140,6 +175,7 @@ export async function POST(
               issuedBy: user.id,
             },
           });
+
           await tx.credentialStatusHistory.create({
             data: {
               credentialId: cred.id,
@@ -149,6 +185,7 @@ export async function POST(
               reason: "Bulk issued from import batch",
             },
           });
+
           return cred;
         });
 
@@ -156,15 +193,22 @@ export async function POST(
           where: { id: row.id },
           data: { status: "IMPORTED", approvedBy: user.id, approvedAt: new Date() },
         });
+
         issued++;
-      } catch {
+      } catch (e) {
+        console.error("Failed to issue row:", e);
         skipped++;
       }
     }
 
     await prisma.importBatch.update({
       where: { id: batchId },
-      data: { status: "COMPLETED", importedRows: issued, approvedRows: issued, completedAt: new Date() },
+      data: {
+        status: "COMPLETED",
+        importedRows: issued,
+        approvedRows: issued,
+        completedAt: new Date(),
+      },
     });
 
     await auditService.log({
