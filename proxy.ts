@@ -18,6 +18,7 @@ export async function proxy(request: NextRequest) {
     "/api/v1/health",
     "/api/v1/verification",
     "/api/v1/integration",
+    "/api/v1/imports/csv-template",
     "/_next",
     "/favicon.ico",
   ];

@@ -5,8 +5,9 @@ import { requirePermission } from "@/modules/rbac/enforce";
 import { Permission } from "@/modules/rbac/permissions";
 import { generateCredentialId } from "@/modules/credentials/credential-id.generator";
 import { generateSecureToken } from "@/lib/crypto";
+import { generateParticipantCode } from "@/lib/participant-code.generator";
 import { auditService } from "@/modules/audit/audit.service";
-import { created, errorResponse, handleRouteError } from "@/lib/api-response";
+import { created, handleRouteError } from "@/lib/api-response";
 import { CredentialStatus, CredentialTypeCode } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
             email: cleanEmail,
             phone: input.recipientPhone || null,
             institution: input.recipientInstitution || null,
+            participantCode: await generateParticipantCode(),
           },
         });
         participantId = createdParticipant.id;
@@ -86,6 +88,7 @@ export async function POST(request: NextRequest) {
           lastName,
           phone: input.recipientPhone || null,
           institution: input.recipientInstitution || null,
+          participantCode: await generateParticipantCode(),
         },
       });
       participantId = createdParticipant.id;
