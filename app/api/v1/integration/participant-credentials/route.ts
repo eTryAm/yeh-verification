@@ -55,53 +55,130 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const participantCode = searchParams.get("participantCode")?.trim();
     const emailRaw = searchParams.get("email")?.trim().toLowerCase();
+    const programQuery = searchParams.get("program")?.trim();
 
-    if (!participantCode && !emailRaw) {
+    if (!participantCode && !emailRaw && !programQuery) {
       return errorResponse(
         "VALIDATION_ERROR",
-        "Either participantCode or email query parameter is required",
+        "At least one query parameter is required: participantCode, email, or program",
         422
       );
     }
 
-    // 4. Look up participant
-    const participant = await prisma.participant.findFirst({
-      where: participantCode
-        ? { participantCode }
-        : { email: emailRaw },
-      select: { id: true, organizationId: true, participantCode: true },
-    });
+    // Mode A: Look up for a specific participant (with optional program filter)
+    if (participantCode || emailRaw) {
+      const participant = await prisma.participant.findFirst({
+        where: participantCode
+          ? { participantCode }
+          : { email: emailRaw },
+        select: { id: true, organizationId: true, participantCode: true, firstName: true, lastName: true },
+      });
 
-    if (!participant) {
-      return errorResponse("NOT_FOUND", "Participant not found", 404);
+      if (!participant) {
+        return errorResponse("NOT_FOUND", "Participant not found", 404);
+      }
+
+      const credentials = await prisma.credential.findMany({
+        where: {
+          participantId: participant.id,
+          organizationId: participant.organizationId,
+          isVerificationEnabled: true,
+          status: { in: [CredentialStatus.VALID, CredentialStatus.ISSUED] },
+          ...(programQuery
+            ? {
+                program: {
+                  name: { contains: programQuery, mode: "insensitive" },
+                },
+              }
+            : {}),
+        },
+        orderBy: { issueDate: "desc" },
+        select: {
+          credentialId: true,
+          title: true,
+          status: true,
+          recipientName: true,
+          issueDate: true,
+          expiresAt: true,
+          duration: true,
+          role: true,
+          credentialType: { select: { code: true, name: true } },
+          program: { select: { name: true } },
+          organization: { select: { name: true } },
+        },
+      });
+
+      const data = credentials.map((c) => ({
+        credentialId: c.credentialId,
+        participantCode: participant.participantCode,
+        recipientName: c.recipientName,
+        title: c.title,
+        credentialType: c.credentialType.code,
+        status: c.status,
+        issueDate: c.issueDate?.toISOString() ?? null,
+        expiresAt: c.expiresAt?.toISOString() ?? null,
+        duration: c.duration ?? null,
+        role: c.role ?? null,
+        program: c.program?.name ?? null,
+        issuer: c.organization.name,
+        verificationUrl: `https://verify.youthempowerment.in/verify/${c.credentialId}`,
+      }));
+
+      void auditService.log({
+        organizationId: participant.organizationId,
+        actorId: undefined,
+        action: "INTEGRATION_CHANGED",
+        resourceType: "Integration",
+        resourceId: participant.id,
+        result: "SUCCESS",
+        metadata: {
+          caller: "performance-yeh",
+          query: {
+            participantCode: participantCode || undefined,
+            email: emailRaw ? "[redacted]" : undefined,
+            program: programQuery || undefined,
+          },
+          credentialCount: data.length,
+          ip,
+        },
+        ipAddress: ip,
+        userAgent: request.headers.get("user-agent") ?? undefined,
+      });
+
+      return ok(data);
     }
 
-    // 5. Fetch credentials - only publicly verifiable statuses
+    // Mode B: Query all credentials for a specific internship / program
     const credentials = await prisma.credential.findMany({
       where: {
-        participantId: participant.id,
-        organizationId: participant.organizationId,
         isVerificationEnabled: true,
         status: { in: [CredentialStatus.VALID, CredentialStatus.ISSUED] },
+        program: {
+          name: { contains: programQuery!, mode: "insensitive" },
+        },
       },
       orderBy: { issueDate: "desc" },
+      take: 500,
       select: {
         credentialId: true,
         title: true,
         status: true,
+        recipientName: true,
         issueDate: true,
         expiresAt: true,
         duration: true,
         role: true,
         credentialType: { select: { code: true, name: true } },
         program: { select: { name: true } },
-        organization: { select: { name: true } },
+        organization: { select: { id: true, name: true } },
+        participant: { select: { participantCode: true } },
       },
     });
 
-    // 6. Shape the public response - strip any internal fields
     const data = credentials.map((c) => ({
       credentialId: c.credentialId,
+      participantCode: c.participant?.participantCode || null,
+      recipientName: c.recipientName,
       title: c.title,
       credentialType: c.credentialType.code,
       status: c.status,
@@ -111,27 +188,27 @@ export async function GET(request: NextRequest) {
       role: c.role ?? null,
       program: c.program?.name ?? null,
       issuer: c.organization.name,
+      verificationUrl: `https://verify.youthempowerment.in/verify/${c.credentialId}`,
     }));
 
-    // 7. Audit log - never block response on audit failure
-    void auditService.log({
-      organizationId: participant.organizationId,
-      actorId: undefined,
-      action: "INTEGRATION_CHANGED",
-      resourceType: "Integration",
-      resourceId: participant.id,
-      result: "SUCCESS",
-      metadata: {
-        caller: "performance-yeh",
-        query: participantCode
-          ? { participantCode }
-          : { email: "[redacted]" },
-        credentialCount: data.length,
-        ip,
-      },
-      ipAddress: ip,
-      userAgent: request.headers.get("user-agent") ?? undefined,
-    });
+    if (credentials.length > 0) {
+      void auditService.log({
+        organizationId: credentials[0].organization.id,
+        actorId: undefined,
+        action: "INTEGRATION_CHANGED",
+        resourceType: "Integration",
+        resourceId: programQuery || "program_query",
+        result: "SUCCESS",
+        metadata: {
+          caller: "performance-yeh",
+          query: { program: programQuery },
+          credentialCount: data.length,
+          ip,
+        },
+        ipAddress: ip,
+        userAgent: request.headers.get("user-agent") ?? undefined,
+      });
+    }
 
     return ok(data);
   } catch (err) {
