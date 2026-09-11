@@ -1,6 +1,7 @@
 import { participantRepository } from "./participant.repository";
 import { auditService } from "@/modules/audit/audit.service";
 import { NotFoundError, DuplicateError } from "@/lib/errors";
+import { generateParticipantCode } from "@/lib/participant-code.generator";
 import type { CreateParticipantInput, UpdateParticipantInput } from "./participant.types";
 import type { PaginationParams } from "@/lib/pagination";
 import type { SessionUser } from "@/modules/rbac/enforce";
@@ -25,8 +26,11 @@ export class ParticipantService {
       if (existing) throw new DuplicateError("participant", "email");
     }
 
+    const participantCode = await generateParticipantCode();
+
     const participant = await participantRepository.create({
       ...input,
+      participantCode,
       country: input.country ?? "India",
       metadata: (input.metadata ?? {}) as never,
       organization: { connect: { id: user.organizationId } },

@@ -31,6 +31,7 @@ export default async function ParticipantsPage() {
       <ParticipantsClient
         initialParticipants={participants.map((p) => ({
           id: p.id,
+          participantCode: p.participantCode,
           firstName: p.firstName,
           lastName: p.lastName,
           email: p.email,

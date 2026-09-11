@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Users, Plus, Search, Mail, Phone, School, X, AlertCircle } from "lucide-react";
+import { Users, Plus, Search, Mail, Phone, School, X, AlertCircle, Copy, Check } from "lucide-react";
 
 interface ParticipantItem {
   id: string;
+  participantCode: string | null;
   firstName: string;
   lastName: string;
   email: string | null;
@@ -23,6 +24,7 @@ export function ParticipantsClient({
 }) {
   const [participants, setParticipants] = useState<ParticipantItem[]>(initialParticipants);
   const [search, setSearch] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Form state
@@ -41,6 +43,7 @@ export function ParticipantsClient({
     const q = search.toLowerCase();
     return (
       fullName.includes(q) ||
+      (p.participantCode && p.participantCode.toLowerCase().includes(q)) ||
       (p.email && p.email.toLowerCase().includes(q)) ||
       (p.institution && p.institution.toLowerCase().includes(q))
     );
@@ -77,6 +80,7 @@ export function ParticipantsClient({
       setParticipants([
         {
           id: created.id,
+          participantCode: created.participantCode || null,
           firstName: created.firstName,
           lastName: created.lastName,
           email: created.email,
@@ -145,6 +149,7 @@ export function ParticipantsClient({
             <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase border-b border-gray-200">
               <tr>
                 <th className="px-5 py-3">Participant Name</th>
+                <th className="px-5 py-3">Participant ID</th>
                 <th className="px-5 py-3">Contact</th>
                 <th className="px-5 py-3">Institution / College</th>
                 <th className="px-5 py-3">Graduation Year</th>
@@ -158,6 +163,28 @@ export function ParticipantsClient({
                   <td className="px-5 py-4 font-semibold text-gray-900">
                     {p.firstName} {p.lastName}
                     {p.city && <span className="block text-xs text-gray-400 font-normal">{p.city}</span>}
+                  </td>
+                  <td className="px-5 py-4">
+                    {p.participantCode ? (
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(p.participantCode!);
+                          setCopiedId(p.participantCode!);
+                          setTimeout(() => setCopiedId(null), 2000);
+                        }}
+                        title="Click to copy Participant ID"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-800 font-mono text-xs font-bold transition group cursor-pointer"
+                      >
+                        <span>{p.participantCode}</span>
+                        {copiedId === p.participantCode ? (
+                          <Check className="w-3 h-3 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3 h-3 text-blue-400 group-hover:text-blue-700" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="text-gray-400 text-xs font-mono">—</span>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     {p.email && (
@@ -195,7 +222,7 @@ export function ParticipantsClient({
 
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-12 text-center text-gray-400">
+                  <td colSpan={7} className="px-5 py-12 text-center text-gray-400">
                     <Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />
                     No participants found.
                   </td>
