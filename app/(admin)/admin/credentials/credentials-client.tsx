@@ -13,6 +13,7 @@ import {
   Download,
   X,
   AlertCircle,
+  Calendar,
 } from "lucide-react";
 import QRCodeLib from "qrcode";
 
@@ -58,6 +59,11 @@ export function CredentialsClient({
   const [revokeModalItem, setRevokeModalItem] = useState<CredentialItem | null>(null);
   const [revokeReason, setRevokeReason] = useState("");
   const [revokeLoading, setRevokeLoading] = useState(false);
+
+  // Edit issue date modal
+  const [editDateModalItem, setEditDateModalItem] = useState<CredentialItem | null>(null);
+  const [newEditDate, setNewEditDate] = useState("");
+  const [editDateLoading, setEditDateLoading] = useState(false);
 
   // New credential form
   const [recipientName, setRecipientName] = useState("");
@@ -202,6 +208,52 @@ export function CredentialsClient({
     }
   }
 
+  function openEditDateModal(c: CredentialItem) {
+    // Try to parse existing issueDate or fallback to today
+    let d = new Date().toISOString().split("T")[0];
+    if (c.issueDate) {
+      const parsed = new Date(c.issueDate);
+      if (!isNaN(parsed.getTime())) {
+        d = parsed.toISOString().split("T")[0];
+      }
+    }
+    setNewEditDate(d);
+    setEditDateModalItem(c);
+  }
+
+  async function handleUpdateDate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editDateModalItem || !newEditDate) return;
+    setEditDateLoading(true);
+    try {
+      const res = await fetch(`/api/v1/credentials/${editDateModalItem.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueDate: newEditDate }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json?.error?.message || "Failed to update date");
+
+      const formatted = new Date(newEditDate).toLocaleDateString("en-IN", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+
+      setCredentials(
+        credentials.map((c) =>
+          c.id === editDateModalItem.id ? { ...c, issueDate: formatted } : c
+        )
+      );
+      setEditDateModalItem(null);
+    } catch (err) {
+      console.error("Update date error:", err);
+      alert("Failed to update issue date. Please try again.");
+    } finally {
+      setEditDateLoading(false);
+    }
+  }
+
   function copyToClipboard(text: string) {
     navigator.clipboard.writeText(text);
     setCopied(true);
@@ -322,6 +374,15 @@ export function CredentialsClient({
                       >
                         <QrCode className="w-4 h-4" />
                       </button>
+                      {c.status !== "REVOKED" && (
+                        <button
+                          onClick={() => openEditDateModal(c)}
+                          title="Edit Certificate Issue Date"
+                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        >
+                          <Calendar className="w-4 h-4" />
+                        </button>
+                      )}
                       <a
                         href={`/verify/${c.credentialId}`}
                         target="_blank"
@@ -366,6 +427,10 @@ export function CredentialsClient({
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Certificate Verification QR</h3>
                 <p className="text-xs text-gray-500 font-mono">{qrModalItem.credential.credentialId}</p>
+                <p className="text-xs text-blue-600 font-semibold mt-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5" />
+                  Official Issue Date: {qrModalItem.credential.issueDate || qrModalItem.credential.createdAt}
+                </p>
               </div>
               <button
                 onClick={() => setQrModalItem(null)}
@@ -668,6 +733,77 @@ export function CredentialsClient({
                   className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50"
                 >
                   {revokeLoading ? "Revoking..." : "Confirm Revocation"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Issue Date Modal */}
+      {editDateModalItem && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-indigo-600" />
+                Edit Certificate Issue Date
+              </h3>
+              <button
+                onClick={() => setEditDateModalItem(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-3 border text-xs space-y-1">
+              <p>
+                <span className="text-gray-500">Recipient:</span>{" "}
+                <strong className="text-gray-900">{editDateModalItem.recipientName}</strong>
+              </p>
+              <p>
+                <span className="text-gray-500">Credential ID:</span>{" "}
+                <span className="font-mono text-gray-700">{editDateModalItem.credentialId}</span>
+              </p>
+              <p>
+                <span className="text-gray-500">Award:</span>{" "}
+                <span className="text-gray-700">{editDateModalItem.title}</span>
+              </p>
+            </div>
+
+            <form onSubmit={handleUpdateDate} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Official Issue Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={newEditDate}
+                  onChange={(e) => setNewEditDate(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono bg-white"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  This modifies the date displayed on the verification page when the QR code is scanned.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setEditDateModalItem(null)}
+                  disabled={editDateLoading}
+                  className="px-4 py-2 border rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editDateLoading || !newEditDate}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50 transition"
+                >
+                  {editDateLoading ? "Saving..." : "Update Issue Date"}
                 </button>
               </div>
             </form>

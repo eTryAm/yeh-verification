@@ -126,7 +126,8 @@ export class CredentialService {
     const credentialId = await generateCredentialId(
       user.organizationId,
       credentialType.id,
-      credentialType.idPrefix
+      credentialType.idPrefix,
+      input.issueDate
     );
 
     const credential = await prisma.$transaction(async (tx) => {

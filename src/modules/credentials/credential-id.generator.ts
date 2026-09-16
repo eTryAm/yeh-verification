@@ -10,9 +10,18 @@ import { prisma } from "@/infrastructure/db/prisma";
 export async function generateCredentialId(
   organizationId: string,
   credentialTypeId: string,
-  idPrefix: string
+  idPrefix: string,
+  customDateOrYear?: Date | string | number
 ): Promise<string> {
-  const year = new Date().getFullYear();
+  let year: number;
+  if (typeof customDateOrYear === "number") {
+    year = customDateOrYear;
+  } else if (customDateOrYear) {
+    const parsed = new Date(customDateOrYear);
+    year = isNaN(parsed.getFullYear()) ? new Date().getFullYear() : parsed.getFullYear();
+  } else {
+    year = new Date().getFullYear();
+  }
 
   const seq = await prisma.$transaction(async (tx) => {
     return tx.credentialSequence.upsert({

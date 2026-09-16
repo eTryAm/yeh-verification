@@ -24,6 +24,7 @@ const directIssueSchema = z.object({
   programName: z.string().max(200).optional().or(z.literal("")),
   issueDate: z.string().optional(),
   expiresAt: z.string().optional(),
+  participantDate: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -50,6 +51,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const issueDate = input.issueDate ? new Date(input.issueDate) : new Date();
+    const targetParticipantDate = input.participantDate
+      ? new Date(input.participantDate)
+      : issueDate;
+
     // 2. Find or create Participant
     let participantId: string;
     const cleanEmail = input.recipientEmail ? input.recipientEmail.trim().toLowerCase() : null;
@@ -72,7 +78,7 @@ export async function POST(request: NextRequest) {
             email: cleanEmail,
             phone: input.recipientPhone || null,
             institution: input.recipientInstitution || null,
-            participantCode: await generateParticipantCode(),
+            participantCode: await generateParticipantCode(targetParticipantDate),
           },
         });
         participantId = createdParticipant.id;
@@ -88,7 +94,7 @@ export async function POST(request: NextRequest) {
           lastName,
           phone: input.recipientPhone || null,
           institution: input.recipientInstitution || null,
-          participantCode: await generateParticipantCode(),
+          participantCode: await generateParticipantCode(targetParticipantDate),
         },
       });
       participantId = createdParticipant.id;
@@ -121,11 +127,11 @@ export async function POST(request: NextRequest) {
     const credentialId = await generateCredentialId(
       organizationId,
       credentialType.id,
-      credentialType.idPrefix
+      credentialType.idPrefix,
+      issueDate
     );
 
     const qrToken = generateSecureToken(24);
-    const issueDate = input.issueDate ? new Date(input.issueDate) : new Date();
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
 
     // 5. Create credential with VALID status

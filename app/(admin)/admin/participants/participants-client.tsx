@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Users, Plus, Search, Mail, Phone, School, X, AlertCircle, Copy, Check } from "lucide-react";
+import { Users, Plus, Search, Mail, Phone, School, X, AlertCircle, Copy, Check, Calendar } from "lucide-react";
 
 interface ParticipantItem {
   id: string;
@@ -35,6 +35,7 @@ export function ParticipantsClient({
   const [institution, setInstitution] = useState("");
   const [graduationYear, setGraduationYear] = useState("");
   const [city, setCity] = useState("");
+  const [registrationDate, setRegistrationDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,6 +67,7 @@ export function ParticipantsClient({
           institution: institution ? institution.trim() : undefined,
           graduationYear: graduationYear ? parseInt(graduationYear) : undefined,
           city: city ? city.trim() : undefined,
+          registrationDate: registrationDate || undefined,
         }),
       });
 
@@ -336,6 +338,22 @@ export function ParticipantsClient({
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  Registration / ID Sequence Date
+                </label>
+                <input
+                  type="date"
+                  value={registrationDate}
+                  onChange={(e) => setRegistrationDate(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono bg-white"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Governs the year prefix in the Participant Code (e.g. <code>P-2026-000001</code>).
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t">

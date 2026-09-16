@@ -26,10 +26,11 @@ export class ParticipantService {
       if (existing) throw new DuplicateError("participant", "email");
     }
 
-    const participantCode = await generateParticipantCode();
+    const { registrationDate, ...participantData } = input;
+    const participantCode = await generateParticipantCode(registrationDate);
 
     const participant = await participantRepository.create({
-      ...input,
+      ...participantData,
       participantCode,
       country: input.country ?? "India",
       metadata: (input.metadata ?? {}) as never,

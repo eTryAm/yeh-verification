@@ -4,8 +4,18 @@ import { prisma } from "@/infrastructure/db/prisma";
  * Generates a sequential participant code like P-2026-000001.
  * Uses the SystemSetting table as an atomic counter — zero schema change needed.
  */
-export async function generateParticipantCode(): Promise<string> {
-  const year = new Date().getFullYear();
+export async function generateParticipantCode(
+  customDateOrYear?: Date | string | number
+): Promise<string> {
+  let year: number;
+  if (typeof customDateOrYear === "number") {
+    year = customDateOrYear;
+  } else if (customDateOrYear) {
+    const parsed = new Date(customDateOrYear);
+    year = isNaN(parsed.getFullYear()) ? new Date().getFullYear() : parsed.getFullYear();
+  } else {
+    year = new Date().getFullYear();
+  }
   const key = `participant_sequence_${year}`;
 
   // Atomic increment using raw SQL upsert for true sequence safety

@@ -2,7 +2,8 @@
 import { useState, useRef } from "react";
 import {
   Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle,
-  ChevronDown, Download, Loader2, RefreshCw, Package, Eye, Trash2, RotateCw
+  ChevronDown, Download, Loader2, RefreshCw, Package, Eye, Trash2, RotateCw,
+  Calendar, X
 } from "lucide-react";
 
 interface Batch {
@@ -16,7 +17,13 @@ interface Batch {
   conflictRows: number;
   importedRows: number;
   createdAt: string;
-  metadata?: { credentialTitle?: string; programName?: string; credentialTypeCode?: string };
+  metadata?: {
+    credentialTitle?: string;
+    programName?: string;
+    credentialTypeCode?: string;
+    issueDate?: string;
+    participantDate?: string;
+  };
 }
 
 interface BatchRow {
@@ -83,6 +90,13 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
   const [credentialTitle, setCredentialTitle] = useState("Certificate of Participation");
   const [programName, setProgramName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [issueDate, setIssueDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [participantDate, setParticipantDate] = useState(() => new Date().toISOString().split("T")[0]);
+
+  // Approval modal state
+  const [approvingBatch, setApprovingBatch] = useState<Batch | null>(null);
+  const [confirmIssueDate, setConfirmIssueDate] = useState("");
+  const [confirmParticipantDate, setConfirmParticipantDate] = useState("");
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -101,6 +115,8 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
       fd.append("credentialTypeCode", credentialTypeCode);
       fd.append("credentialTitle", credentialTitle);
       fd.append("programName", programName);
+      fd.append("issueDate", issueDate);
+      fd.append("participantDate", participantDate);
       const res = await fetch("/api/v1/imports", { method: "POST", body: fd });
       const json = await res.json();
       if (!json.success) throw new Error(json.error?.message || "Upload failed");
@@ -113,13 +129,34 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
     }
   }
 
-  async function handleApprove(batchId: string) {
-    setApproving(batchId); setError(""); setSuccess("");
+  function openApproveModal(batch: Batch) {
+    const meta = batch.metadata || {};
+    const today = new Date().toISOString().split("T")[0];
+    const initialIssue = meta.issueDate || today;
+    const initialPart = meta.participantDate || initialIssue;
+    setConfirmIssueDate(initialIssue);
+    setConfirmParticipantDate(initialPart);
+    setApprovingBatch(batch);
+  }
+
+  async function handleConfirmApprove() {
+    if (!approvingBatch) return;
+    setApproving(approvingBatch.id);
+    setError("");
+    setSuccess("");
     try {
-      const res = await fetch("/api/v1/imports/" + batchId + "/approve", { method: "POST" });
+      const res = await fetch("/api/v1/imports/" + approvingBatch.id + "/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issueDate: confirmIssueDate,
+          participantDate: confirmParticipantDate,
+        }),
+      });
       const json = await res.json();
       if (!json.success) throw new Error(json.error?.message || "Approval failed");
       setSuccess("Done! " + json.data.issued + " credentials issued, " + json.data.skipped + " skipped (already issued).");
+      setApprovingBatch(null);
       await refreshBatches();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Approval failed");
@@ -291,6 +328,32 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                Certificate Issue Date *
+              </label>
+              <input
+                type="date"
+                value={issueDate}
+                onChange={(e) => setIssueDate(e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white font-mono"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">Printed on certificate & verified on QR page</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                Participant ID / Sequence Date
+              </label>
+              <input
+                type="date"
+                value={participantDate}
+                onChange={(e) => setParticipantDate(e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white font-mono"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">Controls year in code (e.g. P-2026-...)</p>
+            </div>
           </div>
 
           {/* Drop zone */}
@@ -454,10 +517,10 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
 
                       {b.status === "AWAITING_APPROVAL" && (
                         <button
-                          onClick={() => handleApprove(b.id)}
+                          onClick={() => openApproveModal(b)}
                           disabled={approving === b.id || b.validRows === 0}
-                          title={b.validRows === 0 ? "No valid rows. Click Re-analyze first." : "Approve and issue credentials"}
-                          className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                          title={b.validRows === 0 ? "No valid rows. Click Re-analyze first." : "Approve and issue credentials with date control"}
+                          className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-sm"
                         >
                           {approving === b.id
                             ? <><Loader2 className="w-3 h-3 animate-spin" /> Issuing...</>
@@ -627,6 +690,126 @@ export default function ImportsClient({ initialBatches }: { initialBatches: Batc
                 className="bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold px-4 py-2 rounded-xl transition"
               >
                 Close Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Issuance Approval & Date Control Modal */}
+      {approvingBatch && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  Confirm & Issue Credentials
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Assign official issue date and participant ID sequence dates before publishing.
+                </p>
+              </div>
+              <button
+                onClick={() => setApprovingBatch(null)}
+                disabled={approving === approvingBatch.id}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Batch Info Summary */}
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-gray-500">File / Source:</span>
+                <span className="font-semibold text-gray-900 font-mono truncate max-w-[200px]">
+                  {approvingBatch.sourceFileName || approvingBatch.source}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Certificate Title:</span>
+                <span className="font-semibold text-gray-900">
+                  {approvingBatch.metadata?.credentialTitle || "Certificate of Participation"}
+                </span>
+              </div>
+              {approvingBatch.metadata?.programName && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Program / Event:</span>
+                  <span className="font-semibold text-gray-900">
+                    {approvingBatch.metadata.programName}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-gray-200/60 pt-2 font-bold">
+                <span className="text-gray-700">Valid Participants to Issue:</span>
+                <span className="text-green-700 text-sm">{approvingBatch.validRows}</span>
+              </div>
+            </div>
+
+            {/* Date Pickers */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-800 mb-1 flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-blue-600" />
+                  Certificate Issue Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={confirmIssueDate}
+                  onChange={(e) => setConfirmIssueDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono bg-white"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  This date will be permanently displayed on the certificate and verification page when the QR code is scanned.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-800 mb-1 flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-indigo-600" />
+                  Participant ID / Sequence Date
+                </label>
+                <input
+                  type="date"
+                  value={confirmParticipantDate}
+                  onChange={(e) => setConfirmParticipantDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono bg-white"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Controls the year embedded into new participant codes (e.g. <code>P-2026-000001</code>).
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t">
+              <button
+                type="button"
+                onClick={() => setApprovingBatch(null)}
+                disabled={approving === approvingBatch.id}
+                className="px-4 py-2 border rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmApprove}
+                disabled={approving === approvingBatch.id || !confirmIssueDate}
+                className="px-5 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
+              >
+                {approving === approvingBatch.id ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Issuing {approvingBatch.validRows} Credentials...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Confirm & Issue {approvingBatch.validRows} Credentials
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -26,12 +26,35 @@ export async function POST(
       return errorResponse("NOT_FOUND", "Import batch not found", 404);
     }
 
+    let bodyIssueDate: string | undefined;
+    let bodyParticipantDate: string | undefined;
+    try {
+      const body = await request.json();
+      if (body && typeof body === "object") {
+        bodyIssueDate = body.issueDate;
+        bodyParticipantDate = body.participantDate;
+      }
+    } catch {
+      // Empty or non-JSON body allowed
+    }
+
     const meta = (batch.metadata || {}) as {
       credentialTypeId?: string;
       credentialTypeCode?: string;
       programName?: string;
       credentialTitle?: string;
+      issueDate?: string;
+      participantDate?: string;
     };
+
+    const targetIssueDateStr = bodyIssueDate?.trim() || meta.issueDate?.trim();
+    const targetIssueDate = targetIssueDateStr ? new Date(targetIssueDateStr) : new Date();
+
+    const targetParticipantDateStr =
+      bodyParticipantDate?.trim() || meta.participantDate?.trim() || targetIssueDateStr;
+    const targetParticipantDate = targetParticipantDateStr
+      ? new Date(targetParticipantDateStr)
+      : targetIssueDate;
 
     // 1. Resolve or create CredentialType
     let credentialType = meta.credentialTypeId
@@ -105,7 +128,7 @@ export async function POST(
           // Backfill participantCode, institution, course, phone if missing
           const updates: Record<string, unknown> = {};
           if (!existing.participantCode) {
-            updates.participantCode = await generateParticipantCode();
+            updates.participantCode = await generateParticipantCode(targetParticipantDate);
           }
           if (!existing.institution && norm.institution) {
             updates.institution = norm.institution;
@@ -124,7 +147,7 @@ export async function POST(
             });
           }
         } else {
-          const participantCode = await generateParticipantCode();
+          const participantCode = await generateParticipantCode(targetParticipantDate);
           const p = await prisma.participant.create({
             data: {
               organizationId: user.organizationId,
@@ -155,7 +178,8 @@ export async function POST(
         const credentialId = await generateCredentialId(
           user.organizationId,
           credentialType.id,
-          credentialType.idPrefix
+          credentialType.idPrefix,
+          targetIssueDate
         );
 
         await prisma.$transaction(async (tx) => {
@@ -168,7 +192,7 @@ export async function POST(
               programId,
               title: meta.credentialTitle || "Certificate of Participation",
               recipientName,
-              issueDate: new Date(),
+              issueDate: targetIssueDate,
               status: CredentialStatus.VALID,
               isVerificationEnabled: true,
               qrToken: generateSecureToken(24),

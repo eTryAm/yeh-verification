@@ -18,6 +18,7 @@ const createParticipantSchema = z.object({
   state: z.string().max(100).optional(),
   country: z.string().max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  registrationDate: z.string().optional(),
 });
 
 export const dynamic = "force-dynamic";

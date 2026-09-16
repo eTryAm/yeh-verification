@@ -37,6 +37,8 @@ export async function POST(request: NextRequest) {
     const credentialTypeCode = (formData.get("credentialTypeCode") as string) || "CERTIFICATE";
     let programName = (formData.get("programName") as string) || "";
     const credentialTitle = (formData.get("credentialTitle") as string) || "Certificate of Participation";
+    const issueDate = (formData.get("issueDate") as string) || "";
+    const participantDate = (formData.get("participantDate") as string) || "";
 
     if (!file) {
       return handleRouteError(new Error("No CSV file uploaded"));
@@ -89,6 +91,8 @@ export async function POST(request: NextRequest) {
           credentialTypeId: credentialType.id,
           programName: programName.trim(),
           credentialTitle: credentialTitle.trim(),
+          issueDate: issueDate.trim() || undefined,
+          participantDate: participantDate.trim() || undefined,
         } as never,
       },
     });

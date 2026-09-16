@@ -10,6 +10,7 @@ export interface CreateParticipantInput {
   state?: string;
   country?: string;
   metadata?: Record<string, unknown>;
+  registrationDate?: string;
 }
 
 export interface UpdateParticipantInput {
